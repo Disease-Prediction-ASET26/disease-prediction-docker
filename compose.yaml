@@ -57,11 +57,11 @@ services:
       - ../disease-prediction-ai/data:/app/data:ro
       - ai-huggingface-cache:/var/cache/huggingface
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
-      interval: 30s
-      timeout: 4s
-      start_period: 30s
-      retries: 3
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=30)"]
+      interval: 15s
+      timeout: 35s
+      start_period: 3m
+      retries: 12
 
   backend-local:
     image: disease-prediction-be:local
@@ -81,11 +81,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ai-local:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-disease_prediction}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-disease_prediction}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate DATA_ENCRYPTION_KEY with openssl rand -base64 32}
+      PREDICTION_SERVICE_BASE_URL: http://ai-local:8000
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     volumes:
@@ -141,11 +144,11 @@ services:
       - ../disease-prediction-ai/data:/app/data:ro
       - ai-huggingface-cache:/var/cache/huggingface
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
-      interval: 30s
-      timeout: 4s
-      start_period: 30s
-      retries: 3
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=30)"]
+      interval: 15s
+      timeout: 35s
+      start_period: 3m
+      retries: 12
 
   backend-dev:
     image: disease-prediction-be:dev
@@ -162,11 +165,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ai-dev:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-disease_prediction}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-disease_prediction}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate DATA_ENCRYPTION_KEY with openssl rand -base64 32}
+      PREDICTION_SERVICE_BASE_URL: http://ai-dev:8000
     ports:
       - "127.0.0.1:18080:8080"
 
@@ -212,6 +218,12 @@ services:
       - ../disease-prediction-ai/models:/app/models:ro
       - ../disease-prediction-ai/data:/app/data:ro
       - ai-huggingface-cache:/var/cache/huggingface
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=30)"]
+      interval: 15s
+      timeout: 35s
+      start_period: 3m
+      retries: 12
 
   backend-prod:
     image: disease-prediction-be:prod-local
@@ -228,11 +240,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ai-prod:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-disease_prediction}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-disease_prediction}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate DATA_ENCRYPTION_KEY with openssl rand -base64 32}
+      PREDICTION_SERVICE_BASE_URL: http://ai-prod:8000
     ports:
       - "127.0.0.1:28080:8080"
 

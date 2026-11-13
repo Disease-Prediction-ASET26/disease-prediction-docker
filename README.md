@@ -33,11 +33,15 @@ mkdir -p ../disease-prediction-ai/models ../disease-prediction-ai/data
 mkdir -p ../disease-prediction-be/.cache/maven
 ```
 
-The API backend requires the encryption key before it starts. The AI service
-does not include trained model or dataset files in its image. Put
-`best.joblib` in `disease-prediction-ai/models/` before calling `/predict`; the
-endpoint returns `503` until it exists. The current backend prediction client
-is a stub, so these containers do not connect the backend to the AI API.
+The API backend requires the encryption key before it starts. The local, dev,
+and production Compose profiles connect the backend to the AI service over the
+Compose network. The backend sends free text and checklist symptoms to
+`POST /predict`, then returns the ranked result through `POST /api/assessments`.
+The AI readiness check loads the classifier and language models before Compose
+starts the backend. Add the trained `best.joblib` file under
+`disease-prediction-ai/models/` for these profiles. Oracle dev uses a separate
+reviewed AI runtime image that contains the classifier and pinned language
+model weights.
 
 ## Local development and testing
 
@@ -49,9 +53,9 @@ docker compose --profile local logs -f
 ```
 
 Open the Vite frontend at `http://localhost:5173`, the backend at
-`http://localhost:8080`, and the AI API at `http://localhost:8000`. The Vite
-proxy forwards `/api` to the backend. PostgreSQL is available on the host at
-`localhost:5433`; its port is bound to loopback.
+`http://localhost:8080`, and the AI API at `http://localhost:8000`. Requests
+flow from Vite through the backend to AI. PostgreSQL is available on the host
+at `localhost:5433`; its port is bound to loopback.
 
 The frontend and AI test commands can run in their local containers:
 
@@ -92,14 +96,12 @@ docker compose --profile prod up --build
 ```
 
 This profile is for a local production-image check. It is not a production
-deployment. Production on k3s should use the scanned GHCR image digest from the
-CI summary, a managed database, and secrets from the cluster secret store. Set
-`DATA_ENCRYPTION_KEY` as a Kubernetes Secret. The AI image does not bundle
-Hugging Face weights or a trained classifier: provide a writable persistent
-cache at `/var/cache/huggingface`, allow model downloads or pre-seed that cache,
-and mount the trained model at `/app/models/best.joblib`. The frontend proxies
-`/api` to the `backend` service by default; set `API_UPSTREAM` to the actual
-backend service URL if its name differs.
+deployment. Oracle dev uses the reviewed AI runtime image, which includes the
+classifier and pinned inference weights. Production on k3s should use reviewed
+GHCR image digests, a managed database, and secrets from the cluster secret
+store. Set `DATA_ENCRYPTION_KEY` as a Kubernetes Secret. The frontend proxies
+`/api` to the `backend` service by default; set `API_UPSTREAM` if the backend
+service has another name.
 
 CI builds `Dockerfile.dev` from `develop` and pull requests into `develop`. It
 builds `Dockerfile.prod` from `main` and pull requests into `main`. Every image
