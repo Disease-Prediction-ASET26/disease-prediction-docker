@@ -1,0 +1,335 @@
+name: disease-prediction
+
+x-rotated-logs: &rotated-logs
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:18.7-alpine3.24@sha256:75dcac3dfb1cd01ca3536910bbc84128759362f8b118bf8c55b38a94f68f3b73
+    profiles: [local, dev, prod]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-disease_prediction}
+      POSTGRES_USER: ${POSTGRES_USER:-disease_prediction}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    logging: *rotated-logs
+
+  ai-local:
+    image: disease-prediction-ai:local
+    profiles: [local]
+    build:
+      context: ../disease-prediction-ai
+      dockerfile: Dockerfile.local
+      args:
+        LOCAL_UID: ${LOCAL_UID:-1000}
+        LOCAL_GID: ${LOCAL_GID:-1000}
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    logging: *rotated-logs
+    environment:
+      HF_HOME: /var/cache/huggingface
+      LOG_LEVEL: ${AI_LOG_LEVEL:-debug}
+      OMP_NUM_THREADS: ${AI_THREADS:-2}
+      MKL_NUM_THREADS: ${AI_THREADS:-2}
+    ports:
+      - "127.0.0.1:${AI_PORT:-8000}:8000"
+    volumes:
+      - ../disease-prediction-ai:/app
+      - ../disease-prediction-ai/models:/app/models
+      - ../disease-prediction-ai/data:/app/data:ro
+      - ai-huggingface-cache:/var/cache/huggingface
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 4s
+      start_period: 30s
+      retries: 3
+
+  backend-local:
+    image: disease-prediction-be:local
+    profiles: [local]
+    build:
+      context: ../disease-prediction-be
+      dockerfile: Dockerfile.local
+      args:
+        LOCAL_UID: ${LOCAL_UID:-1000}
+        LOCAL_GID: ${LOCAL_GID:-1000}
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    logging: *rotated-logs
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-disease_prediction}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-disease_prediction}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate DATA_ENCRYPTION_KEY with openssl rand -base64 32}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ../disease-prediction-be:/workspace
+      - ../disease-prediction-be/.cache/maven:/home/app/.m2
+
+  frontend-local:
+    image: disease-prediction-fe:local
+    profiles: [local]
+    build:
+      context: ../disease-prediction-fe
+      dockerfile: Dockerfile.local
+      args:
+        LOCAL_UID: ${LOCAL_UID:-1000}
+        LOCAL_GID: ${LOCAL_GID:-1000}
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *rotated-logs
+    environment:
+      VITE_API_PROXY_TARGET: http://backend-local:8080
+      npm_config_cache: /tmp/npm-cache
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ../disease-prediction-fe:/app
+      - frontend-node-modules:/app/node_modules
+
+  ai-dev:
+    image: disease-prediction-ai:dev
+    profiles: [dev]
+    build:
+      context: ../disease-prediction-ai
+      dockerfile: Dockerfile.dev
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    logging: *rotated-logs
+    environment:
+      HF_HOME: /var/cache/huggingface
+      LOG_LEVEL: ${AI_LOG_LEVEL:-debug}
+      OMP_NUM_THREADS: ${AI_THREADS:-2}
+      MKL_NUM_THREADS: ${AI_THREADS:-2}
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - ../disease-prediction-ai/models:/app/models:ro
+      - ../disease-prediction-ai/data:/app/data:ro
+      - ai-huggingface-cache:/var/cache/huggingface
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 4s
+      start_period: 30s
+      retries: 3
+
+  backend-dev:
+    image: disease-prediction-be:dev
+    profiles: [dev]
+    build:
+      context: ../disease-prediction-be
+      dockerfile: Dockerfile.dev
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    logging: *rotated-logs
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-disease_prediction}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-disease_prediction}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate DATA_ENCRYPTION_KEY with openssl rand -base64 32}
+    ports:
+      - "127.0.0.1:18080:8080"
+
+  frontend-dev:
+    image: disease-prediction-fe:dev
+    profiles: [dev]
+    build:
+      context: ../disease-prediction-fe
+      dockerfile: Dockerfile.dev
+    init: true
+    read_only: true
+    tmpfs: [/tmp, /etc/nginx/conf.d]
+    logging: *rotated-logs
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      API_UPSTREAM: http://backend-dev:8080
+    ports:
+      - "127.0.0.1:18081:8080"
+
+  ai-prod:
+    image: disease-prediction-ai:prod-local
+    profiles: [prod]
+    build:
+      context: ../disease-prediction-ai
+      dockerfile: Dockerfile.prod
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    logging: *rotated-logs
+    environment:
+      HF_HOME: /var/cache/huggingface
+      LOG_LEVEL: info
+      OMP_NUM_THREADS: ${AI_THREADS:-2}
+      MKL_NUM_THREADS: ${AI_THREADS:-2}
+      DISEASE_MODEL_PATH: /app/models/best.joblib
+    ports:
+      - "127.0.0.1:28000:8000"
+    volumes:
+      - ../disease-prediction-ai/models:/app/models:ro
+      - ../disease-prediction-ai/data:/app/data:ro
+      - ai-huggingface-cache:/var/cache/huggingface
+
+  backend-prod:
+    image: disease-prediction-be:prod-local
+    profiles: [prod]
+    build:
+      context: ../disease-prediction-be
+      dockerfile: Dockerfile.prod
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    logging: *rotated-logs
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-disease_prediction}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-disease_prediction}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Generate DATA_ENCRYPTION_KEY with openssl rand -base64 32}
+    ports:
+      - "127.0.0.1:28080:8080"
+
+  frontend-prod:
+    image: disease-prediction-fe:prod-local
+    profiles: [prod]
+    build:
+      context: ../disease-prediction-fe
+      dockerfile: Dockerfile.prod
+    init: true
+    read_only: true
+    tmpfs: [/tmp, /etc/nginx/conf.d]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *rotated-logs
+    environment:
+      API_UPSTREAM: http://backend-prod:8080
+    ports:
+      - "127.0.0.1:28081:8080"
+
+  sonar-db:
+    image: postgres:18.7-alpine3.24@sha256:75dcac3dfb1cd01ca3536910bbc84128759362f8b118bf8c55b38a94f68f3b73
+    profiles: [sonar]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sonarqube
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD:-change-this-sonar-password}
+    volumes:
+      - sonar-db-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt: [no-new-privileges:true]
+    logging: *rotated-logs
+
+  sonarqube:
+    image: sonarqube:26.10.0.133078-community@sha256:f95aaa9016dd4e92c7d70691167a6d96dbb5d8acffd61eba1cb4335d364a7840
+    profiles: [sonar]
+    restart: unless-stopped
+    depends_on:
+      sonar-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-db:5432/sonarqube
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:-change-this-sonar-password}
+      SONAR_WEB_JAVAOPTS: -Xms256m -Xmx512m
+      SONAR_CE_JAVAOPTS: -Xms256m -Xmx512m
+      SONAR_SEARCH_JAVAOPTS: -Xms512m -Xmx512m
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - sonar-data:/opt/sonarqube/data
+      - sonar-extensions:/opt/sonarqube/extensions
+      - sonar-logs:/opt/sonarqube/logs
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+      nproc: 8192
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+    logging: *rotated-logs
+
+  sonar-scanner:
+    image: sonarsource/sonar-scanner-cli:12.4.0.4321_8.4.0@sha256:6e6eca4d552695a98fb7dab84f0c1bd0885ebbfe272654d1552e24bd7f452d51
+    platform: linux/amd64
+    profiles: [sonar]
+    depends_on:
+      - sonarqube
+    logging: *rotated-logs
+    working_dir: /workspace
+    entrypoint:
+      - /bin/sh
+      - -c
+      - exec sonar-scanner -Dsonar.working.directory=/tmp/.scannerwork "$@"
+      - sonar-scanner
+    environment:
+      SONAR_HOST_URL: http://sonarqube:9000
+      SONAR_TOKEN: ${SONAR_TOKEN:-}
+      SONAR_USER_HOME: /tmp/.sonar
+    volumes:
+      - ../${SONAR_REPO:-disease-prediction-ai}:/workspace:ro
+      - sonar-scanner-cache:/tmp/.sonar/cache
+
+volumes:
+  postgres-data:
+  frontend-node-modules:
+  ai-huggingface-cache:
+  sonar-db-data:
+  sonar-data:
+  sonar-extensions:
+  sonar-logs:
+  sonar-scanner-cache:
