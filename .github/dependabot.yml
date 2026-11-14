@@ -1,6 +1,14 @@
 version: 2
 updates:
-  - package-ecosystem: docker
+  - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: cron
+      cronjob: "0 9 * * MON%2"
+      timezone: Europe/Bucharest
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: cron
+      cronjob: "0 9 * * MON%2"
+      timezone: Europe/Bucharest
